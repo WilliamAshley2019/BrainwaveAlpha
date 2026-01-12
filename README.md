@@ -1,3 +1,6 @@
 concept is a brainwave entrainment plugin that allows things like beat synch monoaural iso and hemisync etc... 
 
 the carrier is not fully implemented still some minor issues with this but the concept is there still needs to be built out a little. 
+
+note I will be changing some of the wording in this source as I think there may be geographic specific trademarking on words specifically Hemisync and there is no intent of passing this off as a "hemisync" branded product or using their propreitary algrorythms etc.. the idea was indeed inspired by systems LIKE hemisync but I havn't actually put time into trying to model based specifically on their technologies if they are publically available. 
+So if Interstate people happen to see this no infringement is intended and it will be changed in the future, this is not a commercial release it is still in internal alpha testing, no brand infringement is intended.
