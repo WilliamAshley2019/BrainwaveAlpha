@@ -1,0 +1,3 @@
+concept is a brainwave entrainment plugin that allows things like beat synch monoaural iso and hemisync etc... 
+
+the carrier is not fully implemented still some minor issues with this but the concept is there still needs to be built out a little. 
