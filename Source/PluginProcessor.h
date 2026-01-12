@@ -2,26 +2,30 @@
 #include <JuceHeader.h>
 #include <random>
 #include <vector>
-#include <cmath>
 
 // ============================================================================
-// SHARED DSP CLASSES (from synth version)
+// ENUMS AND TYPES
 // ============================================================================
 
 enum class BrainwaveFrequency {
-    Delta = 0,    // 1-4 Hz
-    Theta = 1,    // 4-8 Hz
-    Alpha = 2,    // 8-13 Hz
-    Beta = 3,     // 13-30 Hz
-    Gamma = 4     // 30-100 Hz
+    Delta = 0,    // 1-4 Hz - Deep sleep
+    Theta = 1,    // 4-8 Hz - Meditation, creativity
+    Alpha = 2,    // 8-13 Hz - Relaxed alertness
+    Beta = 3,     // 13-30 Hz - Focused thinking
+    Gamma = 4,    // 30-100 Hz - Cognitive integration
+    Focus3 = 5,   // 4 Hz - Physical Relaxation
+    Focus10 = 6,  // 7.5 Hz - Mind Awake/Body Asleep
+    Focus12 = 7,  // 10 Hz - Expanded Awareness
+    Focus15 = 8,  // 12 Hz - No Time
+    Focus21 = 9   // 20 Hz - Bridge State
 };
 
-enum class ProcessingMode {
-    BinauralPan = 0,      // Frequency-dependent L/R separation
-    IsochronicGate = 1,   // Rhythmic amplitude modulation
-    HemiSync = 2,         // Full Hemi-Sync treatment
-    FrequencyShift = 3,   // Subtle pitch modulation
-    Hybrid = 4            // Combination
+enum class EntrainmentMode {
+    Binaural = 0,
+    Monaural = 1,
+    Isochronic = 2,
+    Hybrid = 3,
+    BilateralSync = 4
 };
 
 enum class Waveform {
@@ -30,11 +34,15 @@ enum class Waveform {
     Sawtooth,
     Square,
     Pulse,
-    Noise
+    Noise,
+    DrumKick,
+    DrumSnare,
+    DrumHatClosed,
+    DrumHatOpen
 };
 
 // ============================================================================
-// OSCILLATOR (for carrier generation)
+// OSCILLATOR CLASS
 // ============================================================================
 
 class BrainwaveOscillator {
@@ -62,8 +70,13 @@ public:
         phase = ph;
     }
 
+    float getPhase() const {
+        return phase;
+    }
+
     void reset() {
         phase = 0.0f;
+        envelopePhase = 0.0f;
     }
 
     float process() {
@@ -88,12 +101,29 @@ public:
         case Waveform::Noise:
             sample = randomDistribution(randomGenerator);
             break;
+        case Waveform::DrumKick:
+            sample = generateDrumKick();
+            break;
+        case Waveform::DrumSnare:
+            sample = generateDrumSnare();
+            break;
+        case Waveform::DrumHatClosed:
+            sample = generateHatClosed();
+            break;
+        case Waveform::DrumHatOpen:
+            sample = generateHatOpen();
+            break;
         default:
             sample = std::sin(phase * juce::MathConstants<float>::twoPi);
         }
 
         phase += phaseIncrement;
-        if (phase >= 1.0f) phase -= 1.0f;
+        if (phase >= 1.0f) {
+            phase -= 1.0f;
+            envelopePhase = 0.0f;
+        }
+
+        envelopePhase += phaseIncrement;
 
         return sample;
     }
@@ -103,6 +133,7 @@ private:
     double sampleRate = 44100.0;
     float frequency = 440.0f;
     float phase = 0.0f;
+    float envelopePhase = 0.0f;
     float phaseIncrement = 0.0f;
 
     std::mt19937 randomGenerator;
@@ -110,6 +141,30 @@ private:
 
     void updateIncrement() {
         phaseIncrement = frequency / static_cast<float>(sampleRate);
+    }
+
+    float generateDrumKick() {
+        float pitchEnv = std::exp(-envelopePhase * 15.0f);
+        float ampEnv = std::exp(-envelopePhase * 8.0f);
+        float kickFreq = 55.0f + 200.0f * pitchEnv;
+        return std::sin(kickFreq * envelopePhase * juce::MathConstants<float>::twoPi) * ampEnv;
+    }
+
+    float generateDrumSnare() {
+        float ampEnv = std::exp(-envelopePhase * 12.0f);
+        float toneComponent = std::sin(200.0f * envelopePhase * juce::MathConstants<float>::twoPi) * 0.3f;
+        float noiseComponent = randomDistribution(randomGenerator) * 0.7f;
+        return (toneComponent + noiseComponent) * ampEnv;
+    }
+
+    float generateHatClosed() {
+        float ampEnv = std::exp(-envelopePhase * 25.0f);
+        return randomDistribution(randomGenerator) * ampEnv * 0.5f;
+    }
+
+    float generateHatOpen() {
+        float ampEnv = std::exp(-envelopePhase * 8.0f);
+        return randomDistribution(randomGenerator) * ampEnv * 0.4f;
     }
 };
 
@@ -155,7 +210,7 @@ private:
 };
 
 // ============================================================================
-// BIQUAD FILTER
+// SIMPLE BIQUAD FILTER
 // ============================================================================
 
 class SimpleBiquad {
@@ -169,26 +224,6 @@ public:
         float b0_temp = (1.0f - cosw0) / 2.0f;
         float b1_temp = 1.0f - cosw0;
         float b2_temp = (1.0f - cosw0) / 2.0f;
-        float a0_temp = 1.0f + alpha;
-        float a1_temp = -2.0f * cosw0;
-        float a2_temp = 1.0f - alpha;
-
-        b0 = b0_temp / a0_temp;
-        b1 = b1_temp / a0_temp;
-        b2 = b2_temp / a0_temp;
-        a1 = a1_temp / a0_temp;
-        a2 = a2_temp / a0_temp;
-    }
-
-    void setHighpass(double sampleRate, float cutoffHz, float Q = 0.707f) {
-        float w0 = juce::MathConstants<float>::twoPi * cutoffHz / static_cast<float>(sampleRate);
-        float cosw0 = std::cos(w0);
-        float sinw0 = std::sin(w0);
-        float alpha = sinw0 / (2.0f * Q);
-
-        float b0_temp = (1.0f + cosw0) / 2.0f;
-        float b1_temp = -(1.0f + cosw0);
-        float b2_temp = (1.0f + cosw0) / 2.0f;
         float a0_temp = 1.0f + alpha;
         float a1_temp = -2.0f * cosw0;
         float a2_temp = 1.0f - alpha;
@@ -222,58 +257,14 @@ private:
 };
 
 // ============================================================================
-// ENVELOPE FOLLOWER (for sidechain)
+// MAIN PROCESSOR
 // ============================================================================
 
-class EnvelopeFollower {
-public:
-    void setSampleRate(double sr) {
-        sampleRate = sr;
-        setAttackTime(10.0f);
-        setReleaseTime(100.0f);
-    }
-
-    void setAttackTime(float ms) {
-        attackCoeff = std::exp(-1.0f / (static_cast<float>(sampleRate) * ms * 0.001f));
-    }
-
-    void setReleaseTime(float ms) {
-        releaseCoeff = std::exp(-1.0f / (static_cast<float>(sampleRate) * ms * 0.001f));
-    }
-
-    float process(float input) {
-        float inputAbs = std::abs(input);
-
-        if (inputAbs > envelope) {
-            envelope = attackCoeff * (envelope - inputAbs) + inputAbs;
-        }
-        else {
-            envelope = releaseCoeff * (envelope - inputAbs) + inputAbs;
-        }
-
-        return envelope;
-    }
-
-    void reset() {
-        envelope = 0.0f;
-    }
-
-private:
-    double sampleRate = 44100.0;
-    float attackCoeff = 0.0f;
-    float releaseCoeff = 0.0f;
-    float envelope = 0.0f;
-};
-
-// ============================================================================
-// MAIN PROCESSOR (EFFECT)
-// ============================================================================
-
-class BrainwaveEntrainmentFXAudioProcessor : public juce::AudioProcessor,
+class BrainwaveEntrainmentAudioProcessor : public juce::AudioProcessor,
     public juce::AudioProcessorValueTreeState::Listener {
 public:
-    BrainwaveEntrainmentFXAudioProcessor();
-    ~BrainwaveEntrainmentFXAudioProcessor() override;
+    BrainwaveEntrainmentAudioProcessor();
+    ~BrainwaveEntrainmentAudioProcessor() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
@@ -300,53 +291,58 @@ public:
 
     juce::AudioProcessorValueTreeState& getValueTreeState() { return parameters; }
 
-    bool isActive() const { return processingActive; }
     float getCurrentBeatFrequency() const { return currentBeatHz.getCurrentValue(); }
-    float getCurrentEnvelope() const { return currentEnvelope; }
+
+    // Monitoring
+    float getLeftRMSLevel() const { return leftRMS; }
+    float getRightRMSLevel() const { return rightRMS; }
 
 private:
     void parameterChanged(const juce::String& parameterID, float newValue) override;
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     void updateFrequencies();
-    void processAudio(juce::AudioBuffer<float>& buffer);
+    void generateEntrainmentSignal(juce::AudioBuffer<float>& buffer, int channel, int startSample, int numSamples);
+    void applyEntrainmentToInput(juce::AudioBuffer<float>& buffer);
 
-    // DSP Components
+    // Oscillators
     BrainwaveOscillator carrierOsc;
+    BrainwaveOscillator leftModOsc;
+    BrainwaveOscillator rightModOsc;
     NoiseGenerator noiseGen;
+
+    // Filters for spectral asymmetry
     SimpleBiquad leftFilter;
     SimpleBiquad rightFilter;
-    SimpleBiquad leftSplitLow;
-    SimpleBiquad leftSplitHigh;
-    SimpleBiquad rightSplitLow;
-    SimpleBiquad rightSplitHigh;
-    EnvelopeFollower envelopeFollower;
 
     // Parameters
     juce::AudioProcessorValueTreeState parameters;
 
     // State
     double sampleRate = 44100.0;
-    bool processingActive = true;
-
-    juce::int64 samplesProcessed = 0;
+    bool isActive = true;  // Always active for effect
 
     // Smoothed values
-    juce::SmoothedValue<float> currentBeatHz{ 10.0f };
+    juce::SmoothedValue<float> currentBeatHz{ 1.0f };
     juce::SmoothedValue<float> carrierHz{ 100.0f };
-    juce::SmoothedValue<float> wetDryMix{ 0.5f };
-    juce::SmoothedValue<float> carrierBlend{ 0.0f };
-    juce::SmoothedValue<float> stereoWidth{ 1.0f };
+    juce::SmoothedValue<float> wetMixSmooth{ 0.5f };
+    juce::SmoothedValue<float> modulationDepthSmooth{ 0.8f };
 
-    // Hemi-Sync state
+    // Bilateral Sync specific
     float sharedPhase = 0.0f;
     float driftPhase = 0.0f;
-    float correlationAmount = 0.7f;
-    float currentEnvelope = 0.0f;
+    float correlationAmount = 1.0f;
 
     // Current settings
-    ProcessingMode currentMode = ProcessingMode::HemiSync;
+    EntrainmentMode currentMode = EntrainmentMode::Binaural;
     BrainwaveFrequency currentFrequency = BrainwaveFrequency::Alpha;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BrainwaveEntrainmentFXAudioProcessor)
+    // Monitoring
+    float leftRMS = 0.0f;
+    float rightRMS = 0.0f;
+
+    // Buffer for generated entrainment signal
+    juce::AudioBuffer<float> entrainmentBuffer;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BrainwaveEntrainmentAudioProcessor)
 };
