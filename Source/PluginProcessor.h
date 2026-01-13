@@ -41,6 +41,13 @@ enum class Waveform {
     DrumHatOpen
 };
 
+// NEW: Operation Mode for mixing
+enum class OperationMode {
+    AlwaysOn = 0,
+    GateTrigger = 1,
+    AutoGain = 2
+};
+
 // ============================================================================
 // OSCILLATOR CLASS
 // ============================================================================
@@ -302,7 +309,6 @@ private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     void updateFrequencies();
-    void generateEntrainmentSignal(juce::AudioBuffer<float>& buffer, int channel, int startSample, int numSamples);
     void applyEntrainmentToInput(juce::AudioBuffer<float>& buffer);
 
     // Oscillators
@@ -320,7 +326,6 @@ private:
 
     // State
     double sampleRate = 44100.0;
-    bool isActive = true;  // Always active for effect
 
     // Smoothed values
     juce::SmoothedValue<float> currentBeatHz{ 1.0f };
@@ -328,10 +333,19 @@ private:
     juce::SmoothedValue<float> wetMixSmooth{ 0.5f };
     juce::SmoothedValue<float> modulationDepthSmooth{ 0.8f };
 
+    // NEW: Mix mode smoothing
+    juce::SmoothedValue<float> actualWetMix{ 0.5f };
+    juce::SmoothedValue<float> inputEnvelope{ 0.0f };
+
     // Bilateral Sync specific
     float sharedPhase = 0.0f;
     float driftPhase = 0.0f;
     float correlationAmount = 1.0f;
+
+    // NEW: Operation mode and settings
+    OperationMode currentOperationMode = OperationMode::AlwaysOn;
+    float gateThresholdDB = -40.0f;
+    float autoGainSensitivity = 0.5f;
 
     // Current settings
     EntrainmentMode currentMode = EntrainmentMode::Binaural;

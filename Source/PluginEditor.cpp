@@ -9,7 +9,7 @@ BrainwaveEntrainmentAudioProcessorEditor::BrainwaveEntrainmentAudioProcessorEdit
     BrainwaveEntrainmentAudioProcessor& p)
     : AudioProcessorEditor(&p), audioProcessor(p) {
 
-    setSize(600, 700);  // Smaller since we removed play button and duration controls
+    setSize(600, 750);  // Increased height to accommodate new controls
 
     // Title
     titleLabel.setText("Brainwave Entrainment FX", juce::dontSendNotification);
@@ -41,7 +41,39 @@ BrainwaveEntrainmentAudioProcessorEditor::BrainwaveEntrainmentAudioProcessorEdit
     frequencyAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getValueTreeState(), "brainwave_frequency", frequencySelector);
 
-    // Wet/Dry Mix (CRITICAL for effect!)
+    // Operation Mode Selector (NEW)
+    operationModeLabel.setText("Mix Mode", juce::dontSendNotification);
+    operationModeLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(operationModeLabel);
+
+    operationModeSelector.addItemList(juce::StringArray{ "Always On", "Gate Trigger", "Auto Gain" }, 1);
+    addAndMakeVisible(operationModeSelector);
+    operationModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getValueTreeState(), "operation_mode", operationModeSelector);
+
+    // Gate Threshold (NEW)
+    gateThresholdLabel.setText("Gate Threshold", juce::dontSendNotification);
+    gateThresholdLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(gateThresholdLabel);
+
+    gateThresholdSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    gateThresholdSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 80, 20);
+    addAndMakeVisible(gateThresholdSlider);
+    gateThresholdAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "gate_threshold", gateThresholdSlider);
+
+    // Auto Gain Sensitivity (NEW)
+    autoGainLabel.setText("Auto Gain Sensitivity", juce::dontSendNotification);
+    autoGainLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(autoGainLabel);
+
+    autoGainSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    autoGainSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 80, 20);
+    addAndMakeVisible(autoGainSlider);
+    autoGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "auto_gain_sensitivity", autoGainSlider);
+
+    // Wet/Dry Mix
     wetMixLabel.setText("Entrainment Mix", juce::dontSendNotification);
     wetMixLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(wetMixLabel);
@@ -154,7 +186,7 @@ BrainwaveEntrainmentAudioProcessorEditor::BrainwaveEntrainmentAudioProcessorEdit
     gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "master_gain", gainSlider);
 
-    // Status Label (now shows current beat frequency)
+    // Status Label
     statusLabel.setText("Active", juce::dontSendNotification);
     statusLabel.setFont(juce::FontOptions(14.0f));
     statusLabel.setJustificationType(juce::Justification::centred);
@@ -218,6 +250,9 @@ void BrainwaveEntrainmentAudioProcessorEditor::resized() {
     // Selectors and sliders
     createRow(modeLabel, modeSelector);
     createRow(frequencyLabel, frequencySelector);
+    createRow(operationModeLabel, operationModeSelector);
+    createRow(gateThresholdLabel, gateThresholdSlider);
+    createRow(autoGainLabel, autoGainSlider);
     createRow(wetMixLabel, wetMixSlider);
     createRow(waveformLabel, waveformSelector);
     createRow(solfeggioLabel, solfeggioSelector);
@@ -268,12 +303,9 @@ void BrainwaveEntrainmentAudioProcessorEditor::paint(juce::Graphics& g) {
         wavePath.startNewSubPath(visArea.getX(), visArea.getCentreY());
 
         for (int i = 1; i <= numPoints; ++i) {
-            float x = visArea.getX() + (visArea.getWidth() * i / static_cast<float>(numPoints));
-            float y = visArea.getCentreY() +
-                std::sin(beatHz * i * 0.5f) *
-                std::sin(i * 0.1f) *
-                (visArea.getHeight() * 0.4f);
-
+            float fi = static_cast<float>(i); // Fix warning: cast to float
+            float x = visArea.getX() + (visArea.getWidth() * fi / static_cast<float>(numPoints));
+            float y = visArea.getCentreY() + std::sin(beatHz * fi * 0.5f) *  std::sin(fi * 0.1f) * (visArea.getHeight() * 0.4f);
             wavePath.lineTo(x, y);
         }
 
@@ -304,18 +336,28 @@ void BrainwaveEntrainmentAudioProcessorEditor::timerCallback() {
         rmsLabel.setText("SPL: -- dB", juce::dontSendNotification);
     }
 
-    // Update status based on mix level
+    // Update status based on mix mode and level
     float wetMix = audioProcessor.getValueTreeState().getRawParameterValue("wet_mix")->load();
+    int opMode = static_cast<int>(audioProcessor.getValueTreeState().getRawParameterValue("operation_mode")->load());
+
+    juce::String modeStr;
+    switch (opMode) {
+    case 0: modeStr = "Always On"; break;
+    case 1: modeStr = "Gate Trigger"; break;
+    case 2: modeStr = "Auto Gain"; break;
+    default: modeStr = "Unknown";
+    }
+
     if (wetMix < 0.01f) {
-        statusLabel.setText("Bypassed (Mix = 0%)", juce::dontSendNotification);
+        statusLabel.setText(modeStr + " | Bypassed (Mix = 0%)", juce::dontSendNotification);
         statusLabel.setColour(juce::Label::textColourId, juce::Colours::grey);
     }
     else if (wetMix > 0.99f) {
-        statusLabel.setText("Entrainment Only", juce::dontSendNotification);
+        statusLabel.setText(modeStr + " | Entrainment Only", juce::dontSendNotification);
         statusLabel.setColour(juce::Label::textColourId, juce::Colours::lightgreen);
     }
     else {
-        statusLabel.setText("Active (Mix: " + juce::String(static_cast<int>(wetMix * 100)) + "%)", juce::dontSendNotification);
+        statusLabel.setText(modeStr + " | Mix: " + juce::String(static_cast<int>(wetMix * 100)) + "%", juce::dontSendNotification);
         statusLabel.setColour(juce::Label::textColourId, juce::Colours::cyan);
     }
 

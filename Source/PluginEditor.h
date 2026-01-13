@@ -30,6 +30,18 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> hemiDriftAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> gainAttachment;
 
+    juce::ComboBox operationModeSelector;
+    juce::Slider gateThresholdSlider;
+    juce::Slider autoGainSlider;
+
+    juce::Label operationModeLabel;
+    juce::Label gateThresholdLabel;
+    juce::Label autoGainLabel;
+
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> operationModeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> gateThresholdAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> autoGainAttachment;
+
     // UI Components
     juce::ComboBox modeSelector;
     juce::ComboBox frequencySelector;

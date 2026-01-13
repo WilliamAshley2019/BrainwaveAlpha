@@ -30,6 +30,9 @@ BrainwaveEntrainmentAudioProcessor::BrainwaveEntrainmentAudioProcessor()
     parameters.addParameterListener("modulation_depth", this);
     parameters.addParameterListener("hemisync_correlation", this);
     parameters.addParameterListener("hemisync_drift", this);
+    parameters.addParameterListener("operation_mode", this);
+    parameters.addParameterListener("gate_threshold", this);
+    parameters.addParameterListener("auto_gain_sensitivity", this);
 }
 
 BrainwaveEntrainmentAudioProcessor::~BrainwaveEntrainmentAudioProcessor() {
@@ -43,6 +46,9 @@ BrainwaveEntrainmentAudioProcessor::~BrainwaveEntrainmentAudioProcessor() {
     parameters.removeParameterListener("modulation_depth", this);
     parameters.removeParameterListener("hemisync_correlation", this);
     parameters.removeParameterListener("hemisync_drift", this);
+    parameters.removeParameterListener("operation_mode", this);
+    parameters.removeParameterListener("gate_threshold", this);
+    parameters.removeParameterListener("auto_gain_sensitivity", this);
 }
 
 // ============================================================================
@@ -61,6 +67,8 @@ void BrainwaveEntrainmentAudioProcessor::prepareToPlay(double sr, int samplesPer
     carrierHz.reset(sr, 0.05);
     wetMixSmooth.reset(sr, 0.01);
     modulationDepthSmooth.reset(sr, 0.05);
+    actualWetMix.reset(sr, 0.05);
+    inputEnvelope.reset(sr, 0.1); // Envelope follower with 100ms smoothing
 
     // Setup spectral asymmetry filters
     leftFilter.setLowpass(sr, 2000.0f, 0.707f);
@@ -108,19 +116,64 @@ void BrainwaveEntrainmentAudioProcessor::processBlock(juce::AudioBuffer<float>& 
 
 void BrainwaveEntrainmentAudioProcessor::applyEntrainmentToInput(juce::AudioBuffer<float>& buffer) {
     auto numSamples = buffer.getNumSamples();
-    auto numChannels = juce::jmin(buffer.getNumChannels(), 2); // Fixed: Added juce:: namespace
+    auto numChannels = juce::jmin(buffer.getNumChannels(), 2);
 
-    // Get current parameter values
-    auto wetMix = wetMixSmooth.getNextValue();
+    // Step 1: Calculate input envelope (RMS) for the current block
+    float inputLevel = 0.0f;
+    for (int channel = 0; channel < numChannels; ++channel) {
+        auto* inputData = buffer.getReadPointer(channel);
+        float channelLevel = 0.0f;
+        for (int sample = 0; sample < numSamples; ++sample) {
+            channelLevel += inputData[sample] * inputData[sample];
+        }
+        inputLevel += std::sqrt(channelLevel / numSamples);
+    }
+    inputLevel /= numChannels;
+
+    // Update envelope follower
+    inputEnvelope.setTargetValue(inputLevel);
+
+    // Get current smoothed envelope value
+    float currentEnvelope = 0.0f;
+    for (int i = 0; i < numSamples; ++i) {
+        currentEnvelope = inputEnvelope.getNextValue();
+    }
+
+    // Convert to dB for gate threshold
+    float inputLevelDB = juce::Decibels::gainToDecibels(currentEnvelope, -100.0f);
+
+    // Get user settings
+    float userWet = parameters.getRawParameterValue("wet_mix")->load();
+    int opMode = static_cast<int>(parameters.getRawParameterValue("operation_mode")->load());
+    float gateThreshold = parameters.getRawParameterValue("gate_threshold")->load();
+    float autoSensitivity = parameters.getRawParameterValue("auto_gain_sensitivity")->load();
+
+    // Apply operation mode
+    float targetWet = userWet;
+
+    switch (opMode) {
+    case 0: // Always On
+        targetWet = userWet;
+        break;
+
+    case 1: // Gate Trigger
+        targetWet = (inputLevelDB > gateThreshold) ? userWet : 0.0f;
+        break;
+
+    case 2: // Auto Gain
+        // Scale wet mix based on input level (inverse relationship)
+        float scaledWet = userWet * (1.0f - (currentEnvelope * autoSensitivity));
+        targetWet = juce::jlimit(0.0f, userWet, scaledWet);
+        break;
+    }
+
+    actualWetMix.setTargetValue(targetWet);
+
+    // Step 2: Generate entrainment signal
     auto noiseAmount = parameters.getRawParameterValue("noise_amount")->load();
     auto hemiDrift = parameters.getRawParameterValue("hemisync_drift")->load();
     correlationAmount = parameters.getRawParameterValue("hemisync_correlation")->load();
 
-    // RMS accumulators
-    float leftAccum = 0.0f;
-    float rightAccum = 0.0f;
-
-    // Generate entrainment signal
     for (int sample = 0; sample < numSamples; ++sample) {
         float beatHz = currentBeatHz.getNextValue();
         float carrier = carrierHz.getNextValue();
@@ -239,24 +292,31 @@ void BrainwaveEntrainmentAudioProcessor::applyEntrainmentToInput(juce::AudioBuff
         entrainmentBuffer.setSample(1, sample, rightEntrainment);
     }
 
-    // Mix input with entrainment signal
+    // Step 3: Mix input with entrainment signal using actual wet mix
     for (int channel = 0; channel < numChannels; ++channel) {
         auto* inputData = buffer.getWritePointer(channel);
         auto* entrainmentData = entrainmentBuffer.getReadPointer(channel);
 
         for (int sample = 0; sample < numSamples; ++sample) {
-            float wet = wetMixSmooth.getNextValue();
+            float wet = actualWetMix.getNextValue();
             float dry = 1.0f - wet;
 
             inputData[sample] = (inputData[sample] * dry) + (entrainmentData[sample] * wet);
-
-            // Accumulate for RMS
-            if (channel == 0) leftAccum += inputData[sample] * inputData[sample];
-            if (channel == 1) rightAccum += inputData[sample] * inputData[sample];
         }
     }
 
-    // Calculate RMS
+    // Calculate RMS for monitoring
+    float leftAccum = 0.0f;
+    float rightAccum = 0.0f;
+
+    for (int channel = 0; channel < numChannels; ++channel) {
+        auto* outputData = buffer.getReadPointer(channel);
+        for (int sample = 0; sample < numSamples; ++sample) {
+            if (channel == 0) leftAccum += outputData[sample] * outputData[sample];
+            if (channel == 1) rightAccum += outputData[sample] * outputData[sample];
+        }
+    }
+
     if (numSamples > 0) {
         leftRMS = std::sqrt(leftAccum / static_cast<float>(numSamples));
         rightRMS = std::sqrt(rightAccum / static_cast<float>(numSamples));
@@ -293,6 +353,15 @@ void BrainwaveEntrainmentAudioProcessor::parameterChanged(const juce::String& pa
     }
     else if (parameterID == "modulation_depth") {
         modulationDepthSmooth.setTargetValue(newValue);
+    }
+    else if (parameterID == "operation_mode") {
+        currentOperationMode = static_cast<OperationMode>(static_cast<int>(newValue));
+    }
+    else if (parameterID == "gate_threshold") {
+        gateThresholdDB = newValue;
+    }
+    else if (parameterID == "auto_gain_sensitivity") {
+        autoGainSensitivity = newValue;
     }
 }
 
@@ -362,7 +431,12 @@ BrainwaveEntrainmentAudioProcessor::createParameterLayout() {
             "Focus 15 (12Hz)", "Focus 21 (20Hz)"
         }, 2));
 
-    // Wet/Dry mix (most important for effect!)
+    // Operation Mode (NEW)
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        "operation_mode", "Mix Mode",
+        juce::StringArray{ "Always On", "Gate Trigger", "Auto Gain" }, 0));
+
+    // Wet/Dry mix
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ "wet_mix", 1 }, "Entrainment Mix",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f,
@@ -423,6 +497,20 @@ BrainwaveEntrainmentAudioProcessor::createParameterLayout() {
 
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{ "hemisync_drift", 1 }, "Hemispheric Drift",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float value, int) { return juce::String(static_cast<int>(value * 100.0f)) + "%"; })));
+
+    // Gate Threshold (NEW)
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{ "gate_threshold", 1 }, "Gate Threshold",
+        juce::NormalisableRange<float>(-80.0f, 0.0f, 0.1f), -40.0f,
+        juce::AudioParameterFloatAttributes().withStringFromValueFunction(
+            [](float value, int) { return juce::String(value, 1) + " dB"; })));
+
+    // Auto Gain Sensitivity (NEW)
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{ "auto_gain_sensitivity", 1 }, "Auto Gain Sensitivity",
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction(
             [](float value, int) { return juce::String(static_cast<int>(value * 100.0f)) + "%"; })));
